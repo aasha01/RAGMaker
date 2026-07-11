@@ -1,4 +1,4 @@
-# ARCHITECTURE.md — RAG Maker Lab
+# RAG Maker Lab
 
 ## 1. Purpose
 
