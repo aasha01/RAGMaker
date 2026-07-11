@@ -1,141 +1,173 @@
 # RAG Maker Lab
 
-## 1. Purpose
+A hands-on learning tool for **building and comparing multiple RAG (Retrieval-Augmented Generation) pipelines** with different configurations. Inspect every intermediate stage, understand the tradeoffs of different techniques, and measure which approach works best for your data.
 
-A hands-on tool for learning RAG architecture by **building multiple RAG
-pipelines with different configurations ("Recipes"), inspecting every
-intermediate stage, and comparing final answer quality side by side.**
+## Quick Start
 
-## 2. Two Parts
+### 1. Install Dependencies
 
-### Part A — RAG Builder (wizard)
-
-Walks the user through 5 configurable stages, one at a time. Each stage:
-
-1. Presents options (with plain-language tradeoff explanations)
-2. Runs the chosen technique
-3. **Shows the actual output of that stage** (see §5, Stage Inspection)
-4. Lets the user redo the stage with a different option before continuing
-5. Persists output to disk
-
-At the end, the full configuration + all intermediate artifacts + the final
-vector store are saved together as a **Recipe**.
-
-### Part B — Query & Compare
-
-1. User asks one question.
-2. The question runs against every selected saved Recipe.
-3. Optionally, against multiple LLM providers per recipe (full grid: recipe
-   × provider).
-4. Results shown side by side: retrieved chunks, generated answer, scores,
-   latency, cost.
-
-## 3. Pipeline Stages (Part A)
-
-| #   | Stage        | Example options                                                                                     |
-| --- | ------------ | --------------------------------------------------------------------------------------------------- |
-| 1   | Ingestion    | txt, PDF, DOCX, CSV/JSON, URL, folder                                                               |
-| 2   | Parsing      | Manual (pypdf/pdfplumber/python-docx), LangChain loaders, LlamaIndex readers                        |
-| 3   | Chunking     | Fixed-size, Recursive, Sentence-based, Semantic, Structure-aware (Markdown headers), Sliding window |
-| 4   | Embedding    | Sentence-Transformers (local), OpenAI, Cohere, BGE/Instructor                                       |
-| 5   | Vector Store | FAISS (Flat/HNSW), Chroma, Qdrant                                                                   |
-
-Each stage is a swappable **Strategy** behind a common interface (see
-`SPEC.md` for exact method signatures). The orchestrator (`core/recipe.py`)
-never knows which concrete strategy it's using.
-
-## 4. Recipe = Config + Artifacts
-
-A Recipe is the unit of comparison. Nothing is mutated after creation.
-
-```
-/recipes/recipe_<id>_<short-desc>/
-    config.json              # every choice made, human-readable, reproducible
-    stage_outputs/
-        01_raw/                    original uploaded file(s), untouched
-        02_parsed.json             extracted text + per-page/doc metadata
-        03_chunks.json             [{chunk_id, text, char_len, token_len, source, position}]
-        04_embeddings.npy          vectors (or sampled subset if very large)
-        04_embeddings_meta.json    chunk_id -> row index mapping, model name, dims
-    vectorstore/               the actual DB files (FAISS index / Chroma dir)
-    metadata.json              build timestamp, total tokens, cost, timing per stage
+```bash
+pip install -r requirements.txt
 ```
 
-`config.json` alone must be enough to describe how to rebuild the recipe —
-this is what makes recipes comparable and the project reproducible.
+No API keys required for the default stack (local embeddings + FAISS vector store). Optional features like OpenAI, Anthropic, or Cohere require their respective API keys in environment variables.
 
-## 5. Stage Inspection (learning core requirement)
+### 2. Run the Application
 
-Every stage must be **visually inspectable**, both live during build and
-later when reopening a saved recipe. Minimum per stage:
+Backend:
 
-- **Ingestion**: filename, size, type, raw preview
-- **Parsing**: raw vs. extracted text side-by-side; char/word count delta
-- **Chunking**: scrollable chunk list, chunk length histogram, overlap
-  highlighting between consecutive chunks, "chunks in context" view against
-  the original document
-- **Embedding**: vector dimension, raw value preview, similarity heatmap
-  across a chunk sample, embedding time/cost
-- **Vector Store**: record count, metadata table, 2D projection (PCA/UMAP)
-  scatter plot colored by source document
-- **Query**: retrieved chunks with similarity scores, highlighted in the
-  context of the original parsed document
+```bash
+uvicorn backend.api.main:app --reload
+```
 
-Each stage screen includes an explicit **"redo this stage"** control — a
-learner should be able to see a bad result (e.g. a chunk split mid-sentence)
-and immediately try another strategy without restarting the whole wizard.
+Frontend:
 
-## 6. Query & Compare (Part B) Design
+```bash
+streamlit run frontend/app.py
+```
 
-- Comparison grid: rows = Recipes, columns = LLM Providers (or vice versa).
-  Full grid mode (recipe × provider) is the default.
-- Per cell: generated answer, retrieved chunk list + scores, latency, token
-  cost, and (optional) automated quality scores (faithfulness, answer
-  relevancy, context precision/recall — RAGAS-style).
-- A summary table ranks all cells by a chosen metric, so the "which
-  approach is best" question has a concrete answer, not just a vibe.
+The app opens at `http://localhost:8501/`. You'll see two tabs:
 
-## 7. Pluggable LLM Providers
+- **Build**: Walk through a RAG pipeline step-by-step, choosing strategies and inspecting output at each stage.
+- **Compare**: Query multiple saved recipes side-by-side to compare answer quality, retrieval performance, and cost.
 
-Generation is itself a variable in comparisons, not a fixed constant. All
-providers implement one interface (`stages/llm_providers/base.py`):
-`generate(prompt, **kwargs) -> str`. Concrete providers: OpenAI, Anthropic,
-Ollama (local). New providers require no changes outside
-`stages/llm_providers/`.
+### 3. Build Your First Recipe
 
-## 8. Non-Functional Requirements
+1. Go to the **Build** tab.
+2. Upload a sample document (txt, PDF, DOCX supported).
+3. Choose strategies for each stage:
+   - **Parser**: How to extract text from the document.
+   - **Chunker**: How to split text into chunks.
+   - **Embedder**: How to convert chunks to vectors.
+   - **Vector Store**: Where to index the vectors.
+4. Inspect the output at each stage (chunks, embeddings, etc.).
+5. Save the recipe — it captures all choices + intermediate artifacts for later comparison.
 
-- **No silent fallback**: if a chosen strategy fails, surface the error —
-  never substitute a different technique automatically.
-- **No cross-contamination**: never query a vector store with an embedding
-  from a different model than the one used to build it. Validate at query
-  time (model name + dimension stored in `04_embeddings_meta.json`).
-- **Cost/time transparency**: every API-based stage records tokens used and
-  wall-clock time in `metadata.json`.
-- **Runs out of the box**: default stack (manual parser, recursive
-  chunker, local sentence-transformers embedder, FAISS) requires no API
-  keys, so a learner can build their first recipe with zero external
-  accounts.
+### 4. Query & Compare
 
-## 9. Suggested Project Layout
+Once you have 2+ recipes:
+
+1. Go to the **Compare** tab.
+2. Select recipes and LLM providers.
+3. Ask a question — see answers side-by-side with retrieval scores, latency, and cost.
+
+## What's a Recipe?
+
+A **Recipe** is a complete RAG configuration saved to disk:
+
+```
+recipes/recipe_<id>_<description>/
+├── config.json                  # Every choice made, reproducible
+├── stage_outputs/
+│   ├── 01_raw/                  # Original uploaded files
+│   ├── 02_parsed.json           # Extracted text
+│   ├── 03_chunks.json           # Text chunks
+│   ├── 04_embeddings.npy        # Vector embeddings
+│   └── 04_embeddings_meta.json  # Embedding metadata
+├── vectorstore/                 # Vector database (FAISS/Chroma)
+└── metadata.json                # Timing, cost, stats
+```
+
+Config alone is enough to reproduce the recipe — this is what makes comparison fair and trustworthy.
+
+## Project Structure
 
 ```
 rag_lab/
-├── app.py                       # Streamlit entrypoint (Build tab, Compare tab)
+├── app.py                       # Streamlit UI (Build & Compare tabs)
 ├── stages/
-│   ├── parsers/        {base.py, manual.py, langchain_parser.py, llamaindex_parser.py, __init__.py (registry)}
-│   ├── chunkers/        {base.py, fixed_size.py, recursive.py, sentence.py, semantic.py, structure_aware.py, __init__.py}
-│   ├── embedders/        {base.py, sentence_transformer.py, openai_embedder.py, cohere_embedder.py, __init__.py}
-│   ├── vectorstores/        {base.py, faiss_store.py, chroma_store.py, __init__.py}
-│   └── llm_providers/        {base.py, openai_provider.py, anthropic_provider.py, ollama_provider.py, __init__.py}
+│   ├── parsers/                 # Text extraction (PDF, DOCX, txt)
+│   ├── chunkers/                # Text splitting strategies
+│   ├── embedders/               # Vector embedding models
+│   ├── vectorstores/            # Vector database backends
+│   └── llm_providers/           # Generation providers (OpenAI, Anthropic, Ollama)
 ├── core/
-│   ├── recipe.py                # build/save/load orchestration
-│   ├── inspector.py              # per-stage visualization helpers
-│   └── evaluator.py              # query-time comparison + scoring
-├── sample_data/                  # small sample docs to build a first recipe with
-├── recipes/                      # persisted recipes (gitignored, generated at runtime)
+│   ├── recipe.py                # Build/save/load orchestration
+│   ├── inspector.py             # Stage visualization helpers
+│   └── evaluator.py             # Query & comparison logic
+├── sample_data/                 # Example documents to build with
+├── recipes/                     # Saved recipes (generated at runtime)
 ├── requirements.txt
-├── CLAUDE.md
-├── ARCHITECTURE.md
-└── SPEC.md
+└── docs/
+    ├── ARCHITECTURE.md          # System design & data flow
+    ├── SPEC.md                  # Detailed stage interfaces
+    └── CLAUDE.md                # Development guidelines
 ```
+
+## Pipeline Stages
+
+Each recipe passes through 5 configurable stages:
+
+| Stage            | What It Does                      | Example Strategies                                |
+| ---------------- | --------------------------------- | ------------------------------------------------- |
+| **Parser**       | Extract text from uploaded files  | Manual (pypdf, pdfplumber), LangChain, LlamaIndex |
+| **Chunker**      | Split text into searchable pieces | Fixed-size, Recursive, Sentence-based, Semantic   |
+| **Embedder**     | Convert chunks to vectors         | Sentence-Transformers (local), OpenAI, Cohere     |
+| **Vector Store** | Index & store vectors             | FAISS, Chroma, Qdrant                             |
+| **Retrieval**    | Fetch relevant chunks for a query | Top-K, MMR, Hybrid, Re-ranking                    |
+
+Each stage is swappable — no code changes needed to try a different strategy. The UI shows the output of each stage so you can debug and understand what's happening.
+
+## Default Stack (Requires No API Keys)
+
+- **Parser**: Manual (pypdf for PDF, python-docx for DOCX)
+- **Chunker**: Recursive (splits on sentence/word/char boundaries)
+- **Embedder**: Sentence-Transformers (all-MiniLM-L6-v2)
+- **Vector Store**: FAISS (Flat index, cosine similarity)
+- **LLM**: Ollama (local, requires separate installation)
+
+This stack works offline. For production-grade embedding or generation, add API keys.
+
+## Adding API Keys (Optional)
+
+Set environment variables to enable optional providers:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+export COHERE_API_KEY="..."
+```
+
+Then restart the app — new providers will appear in the dropdowns.
+
+## Files to Read Next
+
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — System design, data flow, stage inspection requirements.
+- **[SPEC.md](SPEC.md)** — Detailed stage interfaces, parameters, config schema.
+- **[CLAUDE.md](CLAUDE.md)** — Development guidelines (for contributors).
+
+## Common Tasks
+
+### View a saved recipe
+
+Recipes are stored in `recipes/`. Open `config.json` to see all choices, or reload in the **Build** tab to inspect stages.
+
+### Compare two recipes
+
+1. Save both as different recipes (e.g., "recursive_chunks" vs "semantic_chunks").
+2. Go to **Compare** tab → select both → ask a question.
+3. See which performs better for your use case.
+
+### Run tests
+
+```bash
+pytest tests/
+```
+
+Each stage has unit tests verifying strategy correctness against sample data.
+
+## Troubleshooting
+
+**"Module not found" errors**: Missing optional dependencies. Install with:
+
+```bash
+pip install langchain llamaindex anthropic openai cohere
+```
+
+**Embedding dimension mismatch**: Cannot query with embeddings from a different model than the one used to build the recipe. Check `04_embeddings_meta.json` in the recipe.
+
+**Ollama not available**: Install [Ollama](https://ollama.ai) and run `ollama pull mistral` (or another model), then restart the app.
+
+## Contributing
+
+See [CLAUDE.md](CLAUDE.md) for development guidelines. Every new stage strategy goes in `stages/<stage>/` with no changes outside that package.
