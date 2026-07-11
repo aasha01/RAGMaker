@@ -1,0 +1,38 @@
+# RAG Lab — dependencies
+#
+# BACKEND API (HTTP service exposing the pipeline stages).
+fastapi>=0.139       # >=0.139 uses a starlette new enough to coexist with streamlit
+uvicorn[standard]
+httpx               # backend TestClient + the frontend's HTTP client
+#
+# CORE PIPELINE (no API key required): the default out-of-the-box path —
+# manual parser, recursive chunker, sentence-transformers embedder, FAISS
+# store — plus inspection visuals. Per SPEC.md section 10.
+streamlit           # frontend UI
+sentence-transformers
+faiss-cpu
+pypdf
+pdfplumber
+python-docx
+numpy
+scikit-learn        # PCA for the 2D vector projection
+plotly              # inspection charts (histogram, heatmap, scatter)
+rank-bm25           # BM25 lexical scoring for the 'hybrid' retriever (stage 5)
+#                   # NOTE: the cross-encoder re-ranker reuses sentence-transformers
+#                   #       (CrossEncoder) above — no separate package needed.
+
+# OPTIONAL (feature-gated, lazy-imported inside the strategy that needs them —
+# the app runs without these installed). Uncomment as you enable strategies.
+langchain>=0.1.0
+llama-index>=0.9.0
+# openai
+# anthropic
+# cohere
+# chromadb
+# qdrant-client
+# ragas          # optional RAGAS-style answer scoring in the Compare tab
+#                #   (faithfulness / answer relevancy / context precision & recall).
+#                #   Lazy-imported in backend/core/evaluator.py; drives a judge LLM
+#                #   (OpenAI by default, so also needs OPENAI_API_KEY). The app runs
+#                #   fine without it — the Compare tab just shows an "install" note.
+# umap-learn

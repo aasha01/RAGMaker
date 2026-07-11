@@ -1,0 +1,18 @@
+# Generated recipes (config + artifacts + vector stores) — regenerated at runtime
+/recipes/*
+!/recipes/.gitkeep
+
+# Step 2 throwaway pipeline demo output (superseded by real recipes in Step 3)
+/demo_output/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Local secrets (API keys for optional providers)
+.env
+.streamlit/secrets.toml

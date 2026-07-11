@@ -1,0 +1,13 @@
+# Streamlit config for the RAG Lab frontend.
+# Loaded automatically when `streamlit run frontend/app.py` is launched from
+# the repo root.
+
+[client]
+# Hide Streamlit's built-in top-right toolbar — including the "Deploy" button
+# and the developer menu. In this teaching tool those controls are not part of
+# the wizard and only confuse the flow (a learner should never see a "Deploy"
+# action next to the pipeline stages).
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
