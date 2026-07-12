@@ -81,13 +81,16 @@ class LlamaIndexParser(BaseParser):
             from llama_index.readers.file import PDFReader
         except ImportError as e:
             raise ImportError(
-                "Parsing PDF with LlamaIndexParser needs the 'llama-index' package "
-                "and the 'pypdf' dependency. "
-                "Install with: pip install llama-index pypdf"
+                "Parsing PDF with LlamaIndexParser needs the 'llama-index-readers-file' "
+                "package (PDFReader lives there, not in core 'llama-index') and the "
+                "'pypdf' dependency. "
+                "Install with: pip install llama-index-readers-file pypdf"
             ) from e
 
+        from pathlib import Path
+
         reader = PDFReader()
-        docs = reader.load_data(file_path)
+        docs = reader.load_data(Path(file_path))
 
         if not docs:
             raise ValueError(
@@ -113,7 +116,7 @@ class LlamaIndexParser(BaseParser):
 
     def _parse_unstructured(self, file_path: str, ext: str) -> ParsedDocument:
         try:
-            from llama_index.readers.file import SimpleDirectoryReader
+            from llama_index.core import SimpleDirectoryReader
         except ImportError as e:
             raise ImportError(
                 "Parsing DOCX/TXT with LlamaIndexParser needs the 'llama-index' package. "

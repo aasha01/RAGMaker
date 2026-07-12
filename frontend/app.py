@@ -218,19 +218,67 @@ def render_build_tab(client) -> None:
         return
 
     chunker_key = option_picker("Chunker", chunkers, "chunker_choice")
-    col_a, col_b = st.columns(2)
-    size = col_a.number_input("size (chars)", min_value=50, max_value=4000, value=512, step=50)
-    overlap = col_b.number_input("overlap (chars)", min_value=0, max_value=1000, value=50, step=10)
+
+    sem_embedder_key = None
+    sem_embedder_params: dict = {}
+    if chunker_key == "semantic":
+        st.caption(
+            "Semantic chunking needs an embedder *now* (to compare sentence "
+            "similarity), before Stage 3's embedder choice. Pick one below — "
+            "Stage 3 lets you pick a (possibly different) embedder for the "
+            "final vectors."
+        )
+        try:
+            embedders = client.list_embedders()
+        except APIError as e:
+            st.error(f"Could not load embedder options: {e}")
+            return
+        sem_embedder_key = option_picker(
+            "Embedder (for semantic chunking)", embedders, "semantic_embedder_choice"
+        )
+        # Recommended default per embedder backend — applied when the backend
+        # choice changes, never overwriting a value the user has since typed.
+        default_model = (
+            "nomic-embed-text:latest" if sem_embedder_key == "ollama" else "all-MiniLM-L6-v2"
+        )
+        if st.session_state.get("semantic_embedder_last") != sem_embedder_key:
+            st.session_state["semantic_model_name"] = default_model
+            st.session_state["semantic_embedder_last"] = sem_embedder_key
+        sem_model_name = st.text_input("model_name (semantic)", key="semantic_model_name")
+        similarity_threshold = st.slider(
+            "similarity_threshold (lower = more, smaller chunks)",
+            0.0, 1.0, 0.3, 0.05, key="semantic_sim_threshold",
+        )
+        sem_embedder_params = {"model_name": sem_model_name, "normalize": True}
+        chunk_params = {"similarity_threshold": float(similarity_threshold)}
+    else:
+        col_a, col_b = st.columns(2)
+        size = col_a.number_input("size (chars)", min_value=50, max_value=4000, value=512, step=50)
+        overlap = col_b.number_input("overlap (chars)", min_value=0, max_value=1000, value=50, step=10)
+        chunk_params = {"size": int(size), "overlap": int(overlap)}
 
     if st.button("Chunk", type="primary"):
         try:
             result = client.chunk(
                 parsed["document"],
                 chunker=chunker_key,
-                params={"size": int(size), "overlap": int(overlap)},
+                params=chunk_params,
+                embedder=sem_embedder_key,
+                embedder_params=sem_embedder_params,
             )
             st.session_state["chunked"] = result
             st.session_state.pop("embedded", None)  # invalidate downstream stage
+            if chunker_key == "semantic":
+                # Prefill Stage 3's embedder choice to match what was just used
+                # here; still fully overridable in Stage 3.
+                st.session_state["embedder_choice"] = sem_embedder_key
+                st.session_state["model_name_input"] = sem_embedder_params["model_name"]
+                st.session_state["semantic_used_embedder"] = {
+                    "key": sem_embedder_key,
+                    "model_name": sem_embedder_params["model_name"],
+                }
+            else:
+                st.session_state.pop("semantic_used_embedder", None)
         except APIError as e:
             st.error(f"Chunk failed: {e}")
 
@@ -269,9 +317,19 @@ def render_build_tab(client) -> None:
         st.error(f"Could not load embedder options: {e}")
         return
 
+    sem_used = st.session_state.get("semantic_used_embedder")
+    if sem_used:
+        st.info(
+            f"Semantic chunking (Stage 2) used **{sem_used['key']}** / "
+            f"`{sem_used['model_name']}`. Pick the embedder/model for the final "
+            "vectors below (same or different — your choice)."
+        )
+
     embedder_key = option_picker("Embedder", embedders, "embedder_choice")
     col_m, col_n, col_d = st.columns([3, 1, 1.6])
-    model_name = col_m.text_input("model_name", value="all-MiniLM-L6-v2")
+    if "model_name_input" not in st.session_state:
+        st.session_state["model_name_input"] = "all-MiniLM-L6-v2"
+    model_name = col_m.text_input("model_name", key="model_name_input")
     normalize = col_n.checkbox("normalize", value=True)
     custom_dim = col_d.number_input(
         "output dim (0 = model default)",
@@ -385,7 +443,12 @@ def render_build_tab(client) -> None:
 
         # --- save as an immutable Recipe ---
         st.markdown("**Save this pipeline as a Recipe** (config + all artifacts, reproducible)")
+        name = st.text_input("Name (optional)", key="recipe_name")
         desc = st.text_input("Description (optional)", key="recipe_desc")
+        st.caption(
+            "No name? It falls back to the description, then to the auto-generated "
+            "recipe id."
+        )
         save_disabled = uploaded is None
         if save_disabled:
             st.caption("Re-upload the document above to enable saving.")
@@ -393,7 +456,10 @@ def render_build_tab(client) -> None:
             import base64
             config = {
                 "parser": {"key": parser_key},
-                "chunker": {"key": chunker_key, "size": int(size), "overlap": int(overlap)},
+                # chunked["params"] echoes back whatever this chunker actually
+                # ran with (size/overlap, similarity_threshold, ...) — generic
+                # across chunkers rather than assuming size/overlap exist.
+                "chunker": {"key": chunker_key, **chunked["params"]},
                 "embedder": {
                     "key": embedder_key,
                     "model_name": model_name,
@@ -405,9 +471,11 @@ def render_build_tab(client) -> None:
             with st.spinner("Building & saving recipe (re-runs the pipeline server-side)…"):
                 try:
                     b64 = base64.b64encode(uploaded.getvalue()).decode()
-                    rec = client.create_recipe(uploaded.name, b64, config, description=desc or None)
+                    rec = client.create_recipe(
+                        uploaded.name, b64, config, name=name or None, description=desc or None
+                    )
                     st.success(
-                        f"Saved {rec['recipe_id']} · {rec['chunk_count']} chunks · "
+                        f"Saved '{rec['name']}' ({rec['recipe_id']}) · {rec['chunk_count']} chunks · "
                         f"{rec['build_time_sec']}s. Open the **Recipes** tab to query it."
                     )
                 except APIError as e:
@@ -453,9 +521,9 @@ def render_recipes_tab(client) -> None:
                 "'💾 Build & Save Recipe'.")
         return
 
-    cols = ["recipe_id", "source_filename", "chunker", "embedder", "model_name",
-            "dimension", "vectorstore", "metric", "chunk_count", "build_time_sec",
-            "created_at", "description"]
+    cols = ["recipe_id", "name", "source_filename", "chunker", "embedder", "model_name",
+            "dimension", "vectorstore", "index_type", "metric", "chunk_count",
+            "build_time_sec", "created_at", "description"]
     st.dataframe(
         [{c: r.get(c) for c in cols} for r in recipes],
         use_container_width=True,
@@ -463,7 +531,11 @@ def render_recipes_tab(client) -> None:
 
     st.subheader("Query a saved recipe")
     ids = [r["recipe_id"] for r in recipes]
-    selected = st.selectbox("Recipe", ids, key="recipe_select")
+    names_by_id = {r["recipe_id"]: r.get("name") or r["recipe_id"] for r in recipes}
+    selected = st.selectbox(
+        "Recipe", ids, key="recipe_select",
+        format_func=lambda rid: f"{names_by_id[rid]} ({rid})",
+    )
     query = st.text_input("Question", value="How was the pneumonia treated in hospital?",
                           key="recipe_query")
     top_k = st.slider("top_k", min_value=1, max_value=10, value=4, key="recipe_topk")
@@ -522,7 +594,11 @@ def render_compare_tab(client) -> None:
         return
 
     ids = [r["recipe_id"] for r in recipes]
-    chosen_recipes = st.multiselect("Recipes (grid rows)", ids, default=ids[: min(2, len(ids))])
+    names_by_id = {r["recipe_id"]: r.get("name") or r["recipe_id"] for r in recipes}
+    chosen_recipes = st.multiselect(
+        "Recipes (grid rows)", ids, default=ids[: min(2, len(ids))],
+        format_func=lambda rid: f"{names_by_id[rid]} ({rid})",
+    )
     prov_keys = [p["key"] for p in providers]
     prov_by_key = {p["key"]: p for p in providers}
     default_prov = ["ollama"] if "ollama" in prov_keys else prov_keys[:1]

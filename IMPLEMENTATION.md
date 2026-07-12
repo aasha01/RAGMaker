@@ -8,6 +8,10 @@ Update this on **every** change (see the rule in `CLAUDE.md` →
 
 | # | Date | Change | Stage/Step | Key files | Tests |
 |---|------|--------|-----------|-----------|-------|
+| 20 | 2026-07-12 | Recipes can now be saved with an optional human-friendly `name` (separate from `description`); if left blank, `name` falls back to `description`, then to the auto-generated `recipe_id` — resolved once at save time and persisted, so every recipe always has a usable label; new `name` column in `config`/`metadata`/SQLite index + Build tab "Name" field + Recipes/Compare tab dropdowns now show `name (recipe_id)` | Build Step 5 / persistence, Recipes UI | `backend/core/recipe.py`, `backend/api/schemas.py`, `backend/api/routers/recipes.py`, `frontend/{app.py,api_client.py}`, `tests/test_api.py` | 3 new assertions in `test_recipe_build_list_get_search` |
+| 19 | 2026-07-12 | Recipes tab table was missing `index_type` column — data was already persisted correctly in `config.json`/SQLite (`_row_from_config` in `recipe.py`), just not displayed; added `index_type` to the `cols` list in `render_recipes_tab` | Query & Compare / recipe listing UI | `frontend/app.py` | n/a (display-only fix, no new logic) |
+| 18 | 2026-07-12 | Fixed `LlamaIndexParser` PDF/DOCX parsing: llama-index 0.10+ split `PDFReader`/`SimpleDirectoryReader` out of core into the separate `llama-index-readers-file` package (and `SimpleDirectoryReader` actually lives in `llama_index.core`, not `llama_index.readers.file`); added the missing package to `requirements.txt`, fixed the wrong import, fixed `PDFReader.load_data` to pass a `Path` (its current signature requires one), and corrected the ImportError message to name the right package | Pipeline stage 1 / parsing | `requirements.txt`, `backend/stages/parsers/llamaindex_parser.py` | 4 unit (existing, now green) |
+| 17 | 2026-07-12 | Resolved missing optional dependencies for LangChain/LlamaIndex parsers: added `unstructured[pdf,docx]`, `pillow`, `python-pptx` to `requirements.txt` so DOCX/PDF parsing works out-of-the-box when langchain/llamaindex are enabled | Pipeline stage 1 / parsing | `requirements.txt` | n/a (existing 6 parser tests now all green) |
 | 16 | 2026-07-11 | Added LangChain and LlamaIndex parsers alongside Manual: `LangChainParser` wraps PyPDFLoader/UnstructuredFileLoader for PDF/DOCX/TXT; `LlamaIndexParser` wraps PDFReader/SimpleDirectoryReader for the same; both lazy-import their packages inside parse(), emit friendly errors if missing, output identical ParsedDocument contract; new files `backend/stages/parsers/{langchain_parser,llamaindex_parser}.py` + registry entries in `__init__.py`; requirements.txt updated with `langchain>=0.1.0` and `llama-index>=0.9.0` as optional | Pipeline stage 1 / parsing | `backend/stages/parsers/{langchain_parser.py,llamaindex_parser.py}`, `backend/stages/parsers/__init__.py`, `requirements.txt`, `tests/test_stages.py` | 6 unit |
 | 15 | 2026-07-11 | Local judge LLM support for RAGAS scoring: added `backend/core/scoring_llm.py` with auto-detect for Ollama (free, offline) or Anthropic (paid) as judge LLMs, replacing OpenAI default; lazy LLM factory in `RagasScorer` defers initialization to first score() call; updated install hint to guide learner through three options; `/score/status` works even if judge LLM can't initialize; real errors surface at scoring time, not startup | Query & Compare / scoring (ARCH §6) | `backend/core/evaluator.py`, `backend/core/scoring_llm.py`, `backend/api/routers/scoring.py` | 0 new (existing coverage applies) |
 | 14 | 2026-07-11 | Improved Ollama provider error handling for missing models: when a model returns 404, now queries `/api/tags` to list locally available models and displays them in error message; also guides learner with `ollama pull <model>` command if no models found | Stage 5 / generation | `backend/stages/llm_providers/ollama_provider.py`, `tests/test_stages.py` | 2 unit |
@@ -25,7 +29,109 @@ Update this on **every** change (see the rule in `CLAUDE.md` →
 | 2 | 2026-07-11 | Implemented the 4 default no-API-key strategies + a pipeline script | Build Step 2 | `backend/stages/{parsers,chunkers,embedders,vectorstores}/*`, `backend/scripts/run_pipeline.py` | 6 unit |
 | 1 | 2026-07-11 | Scaffolded repo layout: base interfaces + empty registries only | Build Step 1 | `backend/stages/*/base.py`, `backend/stages/*/__init__.py` | import smoke |
 
-> Running total after change #16: **74 unit tests** (`tests/test_stages.py` 74 + `tests/test_chunkers.py` 31) + **42 API tests** (`tests/test_api.py`), all green.
+> Running total after change #20: **80 unit tests** (`tests/test_stages.py` 80 + `tests/test_chunkers.py` 31) + **42 API tests** (`tests/test_api.py`, same count — new assertions extend an existing test), all green. *(Note: running counts include all tests for all 3 parsers, 4 chunkers, etc.; reflects full coverage, not just latest addition.)*
+
+---
+
+## Change #20 — Named recipes (2026-07-12)
+
+**Ask:** Let the learner save a recipe with a `name` alongside its `description`/`recipe_id`; if no name is given, fall back to the existing behavior (description, else the auto-generated id).
+
+**Design:** `name` is a new optional field alongside `description` on `RecipeBuildRequest`. Rather than resolving the fallback at every read site, `build_recipe()` resolves `name or description or recipe_id` once at save time and persists that resolved value into `metadata.json["name"]` and the SQLite index — so `RecipeSummary.name` is always non-null and every caller (table, dropdowns) gets a ready-to-display label without re-implementing the fallback. `description` itself is untouched and still stored/returned separately. `rebuild_index()` (which derives rows purely from on-disk `config.json`/`metadata.json`) picks up `metadata.get("name")` automatically, and `_connect()` migrates existing `index.db` files with an `ALTER TABLE ... ADD COLUMN name` guard so pre-existing recipe stores don't break.
+
+**Files touched:**
+- `backend/core/recipe.py` — `name` column in `_INDEX_COLUMNS`, schema + migration in `_connect`, `_row_from_config` derives `name`, `build_recipe(name=...)` resolves + persists it.
+- `backend/api/schemas.py` — `name` on `RecipeBuildRequest` and `RecipeSummary`.
+- `backend/api/routers/recipes.py` — passes `req.name` through to `build_recipe`.
+- `frontend/api_client.py` — `create_recipe(..., name=...)`.
+- `frontend/app.py` — "Name (optional)" text input on the Build tab (next to Description), `name` column in the Recipes table, and `name (recipe_id)` labels on the Recipes/Compare tab recipe pickers.
+- `tests/test_api.py` — extended `test_recipe_build_list_get_search` with an explicit name, a description-only fallback, and a no-label fallback to `recipe_id`.
+
+**Verify:** `python -m pytest tests/test_api.py -k recipe -q` → 10 passed. Manually: Build tab → leave Name blank, fill Description → save → Recipes tab shows the description as the name; fill both → the name wins; leave both blank → the row shows its `recipe_XXX` id as the name.
+
+## Change #19 — Recipes tab missing `index_type` column (2026-07-12)
+
+**Problem:** User asked why the vector store's `index_type` selection wasn't saved to the recipe table.
+
+**Investigation:** Traced the full path — `frontend/app.py` "Build & Save Recipe" button already includes `index_type` in the `vectorstore` config sent to `POST /recipes` ([app.py:464](frontend/app.py#L464)); `backend/core/recipe.py::build_recipe` writes it into `config.json` verbatim (`vs_cfg` spread) and `_row_from_config` reads `config["vectorstore"].get("index_type")` into the SQLite index row. So persistence was correct end-to-end. The only gap: `render_recipes_tab`'s `cols` list (used to build the `st.dataframe` shown on the Recipes tab) never included `"index_type"`, so the already-saved value simply wasn't rendered.
+
+**Fix:** Added `"index_type"` to the `cols` list in `render_recipes_tab`, next to `vectorstore`/`metric`.
+
+**Verify:** Build & save a recipe with `index_type=hnsw`, open the Recipes tab — the column now shows `hnsw` instead of being absent.
+
+---
+
+## Change #18 — Fixed LlamaIndexParser PDF/DOCX parsing (2026-07-12)
+
+**Problem:** Selecting the LlamaIndex parser on a PDF raised: `Parsing PDF with LlamaIndexParser needs the 'llama-index' package and the 'pypdf' dependency` even though `llama-index` (0.14.23) and `pypdf` were both installed. The user was pointed at `llamaindex_parser.py`, where `from llama_index.readers.file import PDFReader` was raising `ImportError` — not because `llama-index` was missing, but because `llama_index.readers.file` is a separate installable package as of llama-index 0.10+ (the monolithic package split into `llama-index-core` plus many `llama-index-<component>` sub-packages).
+
+**Root cause (two bugs, both in `llamaindex_parser.py`):**
+1. `llama-index-readers-file` (provides `PDFReader`) was never installed or listed in `requirements.txt` — only `llama-index>=0.9.0` (the pre-split version pin) was present.
+2. `SimpleDirectoryReader` was being imported from `llama_index.readers.file`, but in current llama-index it lives in `llama_index.core` — that import would have failed too, with a misleading error message pointing at the wrong fix.
+3. (found while verifying the fix) `PDFReader.load_data()`'s current signature requires a `pathlib.Path`, not a `str`; the existing call passed a raw string.
+
+**Solution:**
+- Asked the user before adding the new dependency (per CLAUDE.md's "ask before adding any dependency" rule); approved.
+- Added `llama-index-readers-file>=0.6.0` to `requirements.txt`, installed into the project's `.venv` (was initially installed into the wrong, system-level Python — corrected).
+- `llamaindex_parser.py`: `_parse_pdf` now imports `Path` and calls `reader.load_data(Path(file_path))`; its ImportError message now names `llama-index-readers-file` specifically.
+- `llamaindex_parser.py`: `_parse_unstructured` now imports `SimpleDirectoryReader` from `llama_index.core` instead of `llama_index.readers.file`.
+
+**Key files:**
+- **`requirements.txt`** (updated): added `llama-index-readers-file>=0.6.0` next to `llama-index>=0.9.0`, with a comment explaining the 0.10+ split.
+- **`backend/stages/parsers/llamaindex_parser.py`** (updated): fixed both imports, fixed the `Path` argument, corrected the error message.
+
+**Design decisions:**
+- No fallback/auto-detection between old and new llama-index import paths — the project pins `llama-index>=0.9.0` but in practice only current (0.10+) versions install cleanly, so supporting the pre-split API would be dead code. If this bites a learner on an old pinned version, the ImportError message tells them exactly what package to install.
+- Verified the `Path` requirement by inspecting `PDFReader.load_data`'s actual signature via `inspect.signature` rather than guessing from memory — llama-index's API has moved around across versions.
+
+**How to verify:**
+```bash
+.venv\Scripts\python -m pytest tests/test_stages.py -k "llamaindex or langchain" -v
+# 4 passed
+
+.venv\Scripts\python -c "from backend.stages.parsers.llamaindex_parser import LlamaIndexParser; p = LlamaIndexParser(); doc = p.parse('sample_data/discharge_summary_detailed.pdf'); print(doc.metadata['pages'], doc.metadata['char_count'])"
+# 2 10812
+```
+
+---
+
+## Change #17 — Resolved missing optional dependencies for LangChain/LlamaIndex parsers (2026-07-12)
+
+**Problem:** When users selected the LangChain or LlamaIndex parser in the UI and uploaded a DOCX/PDF file, they got an error: "unstructured package not found, please install it with pip install unstructured". The parsers themselves were implemented correctly with lazy imports and learner-friendly error messages (see change #16), but the required optional packages were not listed in `requirements.txt`.
+
+**Root cause:** LangChain's `UnstructuredFileLoader` (for DOCX/DOC parsing) requires the `unstructured` package plus image/document processing libraries (`pillow` for PIL, `python-pptx` for PowerPoint support). These were not in `requirements.txt`, even though `langchain` and `llama-index` were listed as optional.
+
+**Solution:** Add missing optional packages to `requirements.txt`:
+- `unstructured[pdf,docx]` — the core extraction library (with extras for PDF and DOCX)
+- `pillow` — image processing for embedded images in documents
+- `python-pptx` — PowerPoint support for unstructured documents
+
+These join the existing optional deps (`langchain>=0.1.0`, `llama-index>=0.9.0`).
+
+**Key files:**
+- **`requirements.txt`** (updated): added 3 lines for optional parser deps, all commented with purpose and what they enable.
+
+**Design decisions:**
+- **Grouped with other optionals:** The new packages sit alongside `langchain` and `llama-index` in the "OPTIONAL (feature-gated)" section so users understand they are not core.
+- **Extras syntax:** Used `unstructured[pdf,docx]` to install only the required extras, keeping the footprint minimal.
+- **No changes to parsers:** The lazy imports and error messages in `LangChainParser` and `LlamaIndexParser` already handle missing deps gracefully. This change just ensures they are available.
+
+**How to verify:**
+```bash
+# Install the full requirements (now includes optional parser deps):
+pip install -r requirements.txt
+
+# Run the parser tests (now should pass without "unstructured not found" errors):
+pytest tests/test_stages.py -k "parser" -v
+
+# All 6 parser tests should now pass green:
+# - test_manual_parser_reads_txt
+# - test_manual_parser_rejects_unknown_extension
+# - test_langchain_parser_reads_txt
+# - test_langchain_parser_rejects_unknown_extension
+# - test_llamaindex_parser_reads_txt
+# - test_llamaindex_parser_rejects_unknown_extension
+```
 
 ---
 

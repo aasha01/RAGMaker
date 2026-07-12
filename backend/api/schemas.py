@@ -63,6 +63,18 @@ class ChunkRequest(BaseModel):
         description="Stage parameters (e.g. {'size': 512, 'overlap': 50}); "
         "recorded verbatim in config.json.",
     )
+    embedder: str | None = Field(
+        None,
+        description="Embedder registry key. Required only by chunkers that need "
+        "an embedder instance to run (currently: 'semantic'); ignored by chunkers "
+        "that don't take one.",
+    )
+    embedder_params: dict = Field(
+        default_factory=dict,
+        description="Embedder constructor params (e.g. {'model_name': "
+        "'nomic-embed-text:latest', 'normalize': true}), used together with "
+        "`embedder`.",
+    )
 
 
 class ChunkSummary(BaseModel):
@@ -252,6 +264,11 @@ class RecipeBuildRequest(BaseModel):
         ...,
         description="Per-stage {key + params} for parser/chunker/embedder/vectorstore.",
     )
+    name: str | None = Field(
+        None,
+        description="Human-friendly label. Falls back to `description`, then the "
+        "auto-generated recipe_id, if left blank.",
+    )
     description: str | None = None
 
 
@@ -259,6 +276,7 @@ class RecipeSummary(BaseModel):
     """One row of the recipe index — what the Recipes list shows."""
 
     recipe_id: str
+    name: str | None = None
     created_at: str | None = None
     source_filename: str | None = None
     source_type: str | None = None

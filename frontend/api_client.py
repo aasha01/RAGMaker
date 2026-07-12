@@ -99,12 +99,20 @@ class APIClient:
             raise APIError(self._detail(r))
         return r.json()
 
-    def chunk(self, document: dict, chunker: str = "recursive", params: dict | None = None) -> dict:
+    def chunk(
+        self,
+        document: dict,
+        chunker: str = "recursive",
+        params: dict | None = None,
+        embedder: str | None = None,
+        embedder_params: dict | None = None,
+    ) -> dict:
+        payload = {"document": document, "chunker": chunker, "params": params or {}}
+        if embedder:
+            payload["embedder"] = embedder
+            payload["embedder_params"] = embedder_params or {}
         try:
-            r = self._client.post(
-                "/chunk",
-                json={"document": document, "chunker": chunker, "params": params or {}},
-            )
+            r = self._client.post("/chunk", json=payload)
         except httpx.HTTPError as e:
             raise APIError(f"Cannot reach backend at {self.base_url} ({e}).") from e
         if r.status_code >= 400:
@@ -187,11 +195,12 @@ class APIClient:
     # --- recipes ----------------------------------------------------------
 
     def create_recipe(self, source_filename: str, source_b64: str, config: dict,
-                      description: str | None = None) -> dict:
+                      name: str | None = None, description: str | None = None) -> dict:
         payload = {
             "source_filename": source_filename,
             "source_b64": source_b64,
             "config": config,
+            "name": name,
             "description": description,
         }
         try:

@@ -143,6 +143,68 @@ def test_list_embedders_contains_sentence_transformers():
     assert "sentence_transformers" in keys
 
 
+def test_list_embedders_contains_ollama():
+    r = client.get("/stages/embedders")
+    keys = {o["key"] for o in r.json()}
+    assert "ollama" in keys
+
+
+def test_chunk_semantic_without_embedder_422():
+    # Reproduces the original bug report: picking 'semantic' with no embedder
+    # must fail loudly with a clear 422, not a 500.
+    r = client.post(
+        "/chunk",
+        json={
+            "document": {"text": "Sentence one. Sentence two.", "source": "s", "metadata": {}},
+            "chunker": "semantic",
+            "params": {"similarity_threshold": 0.3},
+        },
+    )
+    assert r.status_code == 422
+    assert "embedder" in r.json()["detail"].lower()
+
+
+def test_chunk_semantic_with_embedder_end_to_end():
+    # The actual fix: passing `embedder` + `embedder_params` on /chunk lets the
+    # semantic chunker run, using an embedder constructed server-side (here the
+    # Ollama one, with httpx mocked so no real server is needed).
+    import httpx
+
+    class FakeResp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"embedding": [1.0, 0.0, 0.0]}
+
+    def fake_post(url, json=None, timeout=None):
+        return FakeResp()
+
+    original = httpx.post
+    httpx.post = fake_post
+    try:
+        r = client.post(
+            "/chunk",
+            json={
+                "document": {
+                    "text": "Sentence one is here. Sentence two follows after.",
+                    "source": "s",
+                    "metadata": {},
+                },
+                "chunker": "semantic",
+                "params": {"similarity_threshold": 0.3},
+                "embedder": "ollama",
+                "embedder_params": {"model_name": "nomic-embed-text:test-e2e"},
+            },
+        )
+    finally:
+        httpx.post = original
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["summary"]["chunk_count"] >= 1
+
+
 def test_embed_unknown_embedder_400():
     r = client.post(
         "/embed",
@@ -414,17 +476,34 @@ def test_recipe_build_list_get_search():
         "/recipes",
         json={"source_filename": "discharge_summary_detailed.txt",
               "source_b64": _sample_b64(), "config": RECIPE_CONFIG,
-              "description": "api test"},
+              "name": "my named recipe", "description": "api test"},
     )
     assert built.status_code == 200
     row = built.json()
     rid = row["recipe_id"]
     assert row["chunk_count"] > 1
     assert row["model_name"] == "all-MiniLM-L6-v2"
+    assert row["name"] == "my named recipe"
 
     # appears in the list
     listed = client.get("/recipes").json()
     assert any(r["recipe_id"] == rid for r in listed)
+
+    # no name given -> falls back to description, then to recipe_id
+    fallback = client.post(
+        "/recipes",
+        json={"source_filename": "discharge_summary_detailed.txt",
+              "source_b64": _sample_b64(), "config": RECIPE_CONFIG,
+              "description": "fallback description"},
+    ).json()
+    assert fallback["name"] == "fallback description"
+
+    no_label = client.post(
+        "/recipes",
+        json={"source_filename": "discharge_summary_detailed.txt",
+              "source_b64": _sample_b64(), "config": RECIPE_CONFIG},
+    ).json()
+    assert no_label["name"] == no_label["recipe_id"]
 
     # detail carries the reproducible config
     detail = client.get(f"/recipes/{rid}").json()

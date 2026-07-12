@@ -45,7 +45,7 @@ RECIPES_ROOT = os.environ.get("RAG_LAB_RECIPES_DIR", "recipes")
 _INDEX_DB = "index.db"
 
 _INDEX_COLUMNS = [
-    "recipe_id", "created_at", "source_filename", "source_type", "parser",
+    "recipe_id", "name", "created_at", "source_filename", "source_type", "parser",
     "chunker", "embedder", "model_name", "dimension", "vectorstore",
     "index_type", "metric", "chunk_count", "build_time_sec", "cost_usd",
     "description", "path",
@@ -99,13 +99,17 @@ def _connect(recipes_root: str) -> sqlite3.Connection:
     conn = sqlite3.connect(_index_path(recipes_root))
     conn.execute(
         """CREATE TABLE IF NOT EXISTS recipes (
-            recipe_id TEXT PRIMARY KEY, created_at TEXT, source_filename TEXT,
+            recipe_id TEXT PRIMARY KEY, name TEXT, created_at TEXT, source_filename TEXT,
             source_type TEXT, parser TEXT, chunker TEXT, embedder TEXT,
             model_name TEXT, dimension INTEGER, vectorstore TEXT,
             index_type TEXT, metric TEXT, chunk_count INTEGER,
             build_time_sec REAL, cost_usd REAL, description TEXT, path TEXT
         )"""
     )
+    # existing DBs created before the `name` column existed
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(recipes)")}
+    if "name" not in cols:
+        conn.execute("ALTER TABLE recipes ADD COLUMN name TEXT")
     return conn
 
 
@@ -123,6 +127,7 @@ def _index_upsert(recipes_root: str, row: dict) -> None:
 def _row_from_config(config: dict, metadata: dict, path: str, description: str | None) -> dict:
     return {
         "recipe_id": config["recipe_id"],
+        "name": metadata.get("name") or description or config["recipe_id"],
         "created_at": config["created_at"],
         "source_filename": config["source"]["filename"],
         "source_type": config["source"].get("type"),
@@ -185,6 +190,7 @@ def build_recipe(
     source_path: str,
     source_filename: str,
     config: dict,
+    name: str | None = None,
     description: str | None = None,
     recipes_root: str = RECIPES_ROOT,
 ) -> dict:
@@ -195,6 +201,11 @@ def build_recipe(
          "chunker": {"key": ..., "size": ..., "overlap": ...},
          "embedder": {"key": ..., "model_name": ..., "normalize": ..., "truncate_dim": ...?},
          "vectorstore": {"key": ..., "index_type": ..., "metric": ...}}
+
+    `name` is the human-friendly label the learner picks to tell recipes apart
+    at a glance. If left blank it falls back to `description`, and if that's
+    also blank, to the auto-generated `recipe_id` — so every recipe always has
+    a usable display name without forcing the user to type one.
 
     Raises ValueError on any unknown strategy or stage failure (no silent
     fallback). Returns the index row dict for the new recipe.
@@ -221,14 +232,19 @@ def build_recipe(
     timings["parse"] = round(time.perf_counter() - t, 3)
 
     t = time.perf_counter()
-    chunks = CHUNKERS[chunker_key]().chunk(doc, **chunker_cfg)
+    # embedder_cfg carries only constructor params now (key was popped). Built
+    # before chunking (not just before embedding) because some chunkers — e.g.
+    # 'semantic' — need a live embedder instance to run at all.
+    embedder = EMBEDDERS[embedder_key](**embedder_cfg)
+    timings["embedder_load"] = round(time.perf_counter() - t, 3)
+
+    t = time.perf_counter()
+    chunks = CHUNKERS[chunker_key]().chunk(doc, embedder=embedder, **chunker_cfg)
     timings["chunk"] = round(time.perf_counter() - t, 3)
     if not chunks:
         raise ValueError("Chunking produced 0 chunks — check the chunker params.")
 
     t = time.perf_counter()
-    # embedder_cfg carries only constructor params now (key was popped).
-    embedder = EMBEDDERS[embedder_key](**embedder_cfg)
     vectors = embedder.embed([c.text for c in chunks])
     timings["embed"] = round(time.perf_counter() - t, 3)
 
@@ -293,6 +309,8 @@ def build_recipe(
     with open(os.path.join(rdir, "config.json"), "w", encoding="utf-8") as f:
         json.dump(config_out, f, indent=2)
 
+    resolved_name = name or description or recipe_id
+
     metadata = {
         "created_at": config_out["created_at"],
         "timings_sec": timings,
@@ -301,6 +319,7 @@ def build_recipe(
         "embedding_cost_usd": 0.0,
         "chunk_count": len(chunks),
         "dimension": embedder.dimension,
+        "name": resolved_name,
         "description": description,
     }
     with open(os.path.join(rdir, "metadata.json"), "w", encoding="utf-8") as f:

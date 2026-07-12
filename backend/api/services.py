@@ -20,27 +20,30 @@ _EMBEDDER_CACHE: dict[tuple, BaseEmbedder] = {}
 def get_embedder(key: str, params: dict) -> BaseEmbedder:
     """Return a cached embedder for (key, params), loading it once.
 
+    `params` is passed straight through as constructor kwargs (minus any None
+    values), so each embedder's own `__init__` defaults apply when a param is
+    omitted — this must stay generic across embedders (e.g. sentence-transformers'
+    `model_name` default differs from Ollama's), not hard-code one backend's
+    defaults here (Strategy Pattern: nothing outside `stages/embedders/` should
+    need editing to add a new embedder).
+
     Raises HTTP 400 for an unknown key and HTTP 422 if the model fails to load
-    (missing package, bad model name, invalid truncate_dim) — never a silent
-    fallback to a different model.
+    (missing package, bad model name, invalid truncate_dim, unreachable server)
+    — never a silent fallback to a different model.
     """
     if key not in EMBEDDERS:
         raise HTTPException(
             status_code=400,
             detail=f"Unknown embedder '{key}'. Available: {sorted(EMBEDDERS)}",
         )
-    model_name = params.get("model_name", "all-MiniLM-L6-v2")
-    normalize = bool(params.get("normalize", True))
-    truncate_dim = params.get("truncate_dim")
-    cache_key = (key, model_name, normalize, truncate_dim)
+    ctor_kwargs = {k: v for k, v in params.items() if v is not None}
+    cache_key = (key, tuple(sorted(ctor_kwargs.items())))
     if cache_key not in _EMBEDDER_CACHE:
         try:
-            _EMBEDDER_CACHE[cache_key] = EMBEDDERS[key](
-                model_name=model_name, normalize=normalize, truncate_dim=truncate_dim
-            )
+            _EMBEDDER_CACHE[cache_key] = EMBEDDERS[key](**ctor_kwargs)
         except Exception as exc:
             raise HTTPException(
                 status_code=422,
-                detail=f"Failed to load embedder '{key}' ({model_name}): {exc}",
+                detail=f"Failed to load embedder '{key}' ({params.get('model_name', 'default model')}): {exc}",
             ) from exc
     return _EMBEDDER_CACHE[cache_key]

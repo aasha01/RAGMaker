@@ -250,6 +250,66 @@ def test_embedder_rejects_bad_truncate_dim():
     assert raised
 
 
+def test_ollama_embedder_registered():
+    from backend.stages.embedders import REGISTRY as EMBEDDERS
+    from backend.stages.embedders.ollama_embedder import OllamaEmbedder
+
+    assert "ollama" in EMBEDDERS
+    assert EMBEDDERS["ollama"] is OllamaEmbedder
+
+
+def test_ollama_embedder_dimension_and_embed():
+    import httpx
+    from backend.stages.embedders.ollama_embedder import OllamaEmbedder
+
+    captured = []
+
+    class FakeResp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"embedding": [0.1, 0.2, 0.3, 0.4]}
+
+    def fake_post(url, json=None, timeout=None):
+        captured.append((url, json))
+        return FakeResp()
+
+    original = httpx.post
+    httpx.post = fake_post
+    try:
+        emb = OllamaEmbedder(model_name="nomic-embed-text:latest")
+        assert emb.dimension == 4  # discovered via the probe call, not hard-coded
+        vecs = emb.embed(["hello", "world"])
+    finally:
+        httpx.post = original
+
+    assert vecs.shape == (2, 4)
+    # normalize=True by default -> unit vectors.
+    assert all(abs(float(np.linalg.norm(row)) - 1.0) < 1e-5 for row in vecs)
+    assert captured[0][0].endswith("/api/embeddings")
+    assert captured[0][1]["model"] == "nomic-embed-text:latest"
+
+
+def test_ollama_embedder_unreachable_raises_friendly():
+    import httpx
+    from backend.stages.embedders.ollama_embedder import OllamaEmbedder
+
+    def fake_post(url, json=None, timeout=None):
+        raise httpx.ConnectError("connection refused")
+
+    original = httpx.post
+    httpx.post = fake_post
+    raised = False
+    try:
+        OllamaEmbedder()
+    except RuntimeError as e:
+        raised = "Ollama" in str(e) and "ollama pull" in str(e)
+    finally:
+        httpx.post = original
+    assert raised
+
+
 # --- LLM providers -----------------------------------------------------------
 # Network is always mocked: Ollama via a patched httpx.post, OpenAI/Anthropic via
 # fake SDK modules injected into sys.modules. These tests need no packages

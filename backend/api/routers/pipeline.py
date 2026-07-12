@@ -20,6 +20,7 @@ from fastapi import APIRouter, Body, HTTPException, Query
 from backend.stages.parsers import REGISTRY as PARSERS
 from backend.stages.parsers.base import ParsedDocument
 from backend.stages.chunkers import REGISTRY as CHUNKERS
+from ..services import get_embedder
 from ..schemas import (
     ChunkModel,
     ChunkRequest,
@@ -90,8 +91,14 @@ def chunk(req: ChunkRequest) -> ChunkResponse:
         )
 
     doc = ParsedDocument.from_dict(req.document.model_dump())
+    chunk_kwargs = dict(req.params)
+    if req.embedder:
+        # Only chunkers that declare an `embedder` param (e.g. semantic) use
+        # this; others accept and ignore it via **_ignored (Strategy Pattern —
+        # this router stays generic across chunkers).
+        chunk_kwargs["embedder"] = get_embedder(req.embedder, req.embedder_params)
     try:
-        chunks = CHUNKERS[req.chunker]().chunk(doc, **req.params)
+        chunks = CHUNKERS[req.chunker]().chunk(doc, **chunk_kwargs)
     except Exception as exc:  # e.g. invalid size/overlap — report it, don't guess
         raise HTTPException(
             status_code=422,

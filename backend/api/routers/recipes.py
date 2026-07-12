@@ -125,6 +125,7 @@ def create_recipe(req: RecipeBuildRequest) -> RecipeSummary:
             tmp_path,
             req.source_filename,
             req.config,
+            name=req.name,
             description=req.description,
             recipes_root=RECIPES_ROOT,
         )

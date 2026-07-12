@@ -81,9 +81,10 @@ class LangChainParser(BaseParser):
             from langchain_community.document_loaders import PyPDFLoader
         except ImportError as e:
             raise ImportError(
-                "Parsing PDF with LangChainParser needs the 'langchain' package "
-                "and the 'pypdf' dependency. "
-                "Install with: pip install langchain pypdf"
+                "Parsing PDF with LangChainParser needs the 'langchain-community' "
+                "package (PyPDFLoader lives there, not in core 'langchain') and "
+                "the 'pypdf' dependency. "
+                "Install with: pip install langchain-community pypdf"
             ) from e
 
         loader = PyPDFLoader(file_path)
@@ -115,9 +116,10 @@ class LangChainParser(BaseParser):
             from langchain_community.document_loaders import UnstructuredFileLoader
         except ImportError as e:
             raise ImportError(
-                "Parsing DOCX/DOC with LangChainParser needs the 'langchain' package "
+                "Parsing DOCX/DOC with LangChainParser needs the 'langchain-community' "
+                "package (UnstructuredFileLoader lives there, not in core 'langchain') "
                 "and the 'unstructured' dependency. "
-                "Install with: pip install langchain unstructured pillow pptx "
+                "Install with: pip install langchain-community unstructured pillow pptx "
                 "(and pdf2image for PDFs, if not already present)"
             ) from e
 

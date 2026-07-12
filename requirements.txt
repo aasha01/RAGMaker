@@ -24,15 +24,21 @@ rank-bm25           # BM25 lexical scoring for the 'hybrid' retriever (stage 5)
 # OPTIONAL (feature-gated, lazy-imported inside the strategy that needs them —
 # the app runs without these installed). Uncomment as you enable strategies.
 langchain>=0.1.0
+langchain-community>=0.1.0  # PyPDFLoader/UnstructuredFileLoader live here, not in core langchain
 llama-index>=0.9.0
+llama-index-readers-file>=0.6.0  # PDFReader/SimpleDirectoryReader file loaders — split out of core llama-index 0.10+
+unstructured[pdf,docx]  # for langchain & llamaindex DOCX/PDF parsing
+pillow                  # image processing for unstructured documents
+python-pptx             # PowerPoint support for unstructured
 # openai
 # anthropic
 # cohere
 # chromadb
 # qdrant-client
-# ragas          # optional RAGAS-style answer scoring in the Compare tab
+ragas            # optional RAGAS-style answer scoring in the Compare tab
 #                #   (faithfulness / answer relevancy / context precision & recall).
 #                #   Lazy-imported in backend/core/evaluator.py; drives a judge LLM
-#                #   (OpenAI by default, so also needs OPENAI_API_KEY). The app runs
+#                #   auto-detected via backend/core/scoring_llm.py — Ollama (free,
+#                #   RAGAS_LLM_PROVIDER=ollama), Anthropic, or OpenAI. The app runs
 #                #   fine without it — the Compare tab just shows an "install" note.
 # umap-learn
